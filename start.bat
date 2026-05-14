@@ -1,48 +1,42 @@
 @echo off
-rem M-Agent 快速启动脚本
-rem 使用方法：双击运行此文件
-
+chcp 65001 >nul 2>&1
 echo ========================================
-echo M-Agent 启动器
+echo M-Agent Launcher
 echo ========================================
 echo.
 
-rem 检查 Ollama 是否运行
-echo [1/4] 检查 Ollama 服务...
+echo [1/4] Checking Ollama...
 ollama list >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Ollama 未运行，正在启动...
+if errorlevel 1 (
+    echo Ollama not running, starting...
     start /min cmd /c "ollama serve"
     timeout /t 3 /nobreak >nul
 )
-echo Ollama 已就绪
+echo Ollama OK
 echo.
 
-rem 检查 API 是否已安装依赖
-echo [2/4] 检查依赖...
+echo [2/4] Checking dependencies...
 python -c "import agentm" 2>nul
-if %errorlevel% neq 0 (
-    echo 依赖未安装，正在安装...
+if errorlevel 1 (
+    echo Installing dependencies...
     pip install -e D:\agentm -q
 )
-echo 依赖就绪
+echo Dependencies OK
 echo.
 
-rem 启动 API
-echo [3/4] 启动 API 服务 (端口 8766)...
+echo [3/4] Starting API on port 8766...
 cd /d D:\agentm
 start "M-Agent API" cmd /c "python -m agentm.interfaces.api.main"
 timeout /t 2 /nobreak >nul
-echo API 已启动
+echo API started
 echo.
 
-rem 打开浏览器
-echo [4/4] 打开浏览器...
+echo [4/4] Opening browser...
 start http://localhost:8766
 
 echo.
 echo ========================================
-echo M-Agent 已启动！
+echo M-Agent started!
 echo API: http://localhost:8766
 echo ========================================
 pause
