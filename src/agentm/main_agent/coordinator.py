@@ -192,7 +192,7 @@ class Coordinator:
                 async for chunk in self._run_code_task(task):
                     yield chunk
             elif intent == IntentType.CHAT:
-                async for chunk in self._run_chat(task):
+                for chunk in self._run_chat(task):
                     yield chunk
             else:
                 yield f"[Coordinator] 未知意图类型，跳过执行\n"
@@ -232,7 +232,7 @@ class Coordinator:
 
         yield f"\n[Coordinator] 执行Agent返回结果，已记录\n"
 
-    async def _run_chat(self, task: Task) -> AsyncGenerator[str, None]:
+    def _run_chat(self, task: Task):
         """闲聊类任务：直接调用 LLM 生成回复"""
         yield f"[Coordinator] → 闲聊模式\n"
         from ..core.llm_engine import get_reasoning_engine
