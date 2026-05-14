@@ -1,0 +1,145 @@
+# AgentM 默认配置文件
+# 复制此文件为 config.yaml 并根据需要修改
+
+# ============================================
+# 运行环境
+# ============================================
+# 可选值：development, testing, production
+environment: development
+
+# ============================================
+# RAG 引擎配置
+# ============================================
+rag:
+  # 向量数据库持久化目录
+  persist_directory: "./agentm_data/rag_db"
+  # 嵌入模型（Sentence-Transformers 模型名称）
+  embedding_model: "all-MiniLM-L6-v2"
+  # ChromaDB 集合名称
+  collection_name: "agentm_knowledge"
+  # 默认返回的检索结果数量
+  top_k: 5
+  # BM25 参数
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  # 混合检索权重（向量权重，1-alpha 为 BM25 权重）
+  hybrid_alpha: 0.5
+  # 内容处理
+  max_content_length: 4000
+  chunk_size: 500
+  chunk_overlap: 50
+
+# ============================================
+# 熔断器配置
+# ============================================
+circuit_breaker:
+  # 失败阈值（达到后触发熔断）
+  failure_threshold: 5
+  # 成功阈值（半开状态下需要多少次成功才能恢复）
+  success_threshold: 3
+  # 恢复超时时间（秒）
+  recovery_timeout_seconds: 30.0
+  # 半开状态允许的最大请求数
+  half_open_max_requests: 3
+  # 请求超时时间（秒），None 表示不限制
+  timeout_seconds: null
+  # 降级策略：fail_fast, return_default, return_cache, call_backup, retry_once, graceful_degrade
+  fallback_strategy: "fail_fast"
+  # 默认返回值（当策略为 return_default 时使用）
+  default_value: null
+  # 是否启用熔断器
+  enabled: true
+
+# ============================================
+# 缓存配置
+# ============================================
+cache:
+  # 最大缓存条目数
+  max_size: 1000
+  # 最大内存占用（MB）
+  max_memory_mb: 100.0
+  # 默认过期时间（秒），null 表示永不过期
+  default_ttl_seconds: 300
+
+# ============================================
+# Agent 配置
+# ============================================
+agent:
+  # 最大消息队列大小
+  max_message_queue_size: 10000
+  # 任务最大重试次数
+  task_max_retries: 3
+  # 任务超时时间（秒）
+  task_timeout_seconds: 300.0
+  # 心跳间隔（秒）
+  heartbeat_interval_seconds: 30.0
+  # 是否启用 Agent 持久化
+  persistence_enabled: true
+  # Agent 持久化数据库路径
+  persistence_db_path: "./agentm_data/agents.db"
+
+# ============================================
+# 工作流配置
+# ============================================
+workflow:
+  # 默认步骤超时时间（秒）
+  default_step_timeout_seconds: 60.0
+  # 最大并发工作流数
+  max_concurrent_workflows: 10
+  # 执行历史保留天数
+  execution_history_retention_days: 30
+  # 工作流持久化数据库路径
+  persistence_db_path: "./agentm_data/workflows.db"
+
+# ============================================
+# WebUI 配置
+# ============================================
+webui:
+  # 监听地址
+  host: "0.0.0.0"
+  # 监听端口
+  port: 5000
+  # 调试模式（生产环境请设为 false）
+  debug: false
+  # 会话密钥（用于加密 session，生产环境请设置随机字符串）
+  secret_key: null
+  # 会话超时时间（分钟）
+  session_timeout_minutes: 60
+
+# ============================================
+# 日志配置
+# ============================================
+log:
+  # 日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  # 日志格式
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  # 日志文件路径，null 表示只输出到控制台
+  file: "./agentm_data/logs/agentm.log"
+  # 日志文件最大大小（MB）
+  max_size_mb: 10.0
+  # 备份文件数量
+  backup_count: 5
+
+# ============================================
+# 数据库配置
+# ============================================
+database:
+  # 数据库类型：sqlite, postgresql, mysql
+  type: "sqlite"
+  # SQLite 数据库路径（仅 SQLite 使用）
+  path: "./agentm_data/agentm.db"
+  # 数据库主机（仅 PostgreSQL/MySQL 使用）
+  host: null
+  # 数据库端口（仅 PostgreSQL/MySQL 使用）
+  port: null
+  # 数据库用户名（仅 PostgreSQL/MySQL 使用）
+  username: null
+  # 数据库密码（仅 PostgreSQL/MySQL 使用）
+  password: null
+  # 数据库名称（仅 PostgreSQL/MySQL 使用）
+  database: null
+  # 连接池大小
+  pool_size: 5
+  # 是否打印 SQL（调试用）
+  echo: false

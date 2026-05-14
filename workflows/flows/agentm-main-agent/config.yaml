@@ -1,0 +1,5 @@
+# Main Agent Coordinator Configuration
+executor_mode: "auto"  # auto = 渐进式自动升级
+stream_output: true
+max_retries: 3
+timeout_seconds: 300

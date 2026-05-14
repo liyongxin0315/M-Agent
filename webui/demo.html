@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentM WebUI 2.0 - 演示版</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* 顶部工具栏 */
+        .toolbar {
+            height: 56px;
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+        }
+        .logo {
+            font-size: 20px;
+            font-weight: 700;
+            color: #3498db;
+        }
+        .toolbar-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+        
+        /* 主内容区 */
+        .main-content {
+            display: flex;
+            height: calc(100vh - 56px - 32px);
+        }
+        
+        /* 左侧节点面板 */
+        .node-panel {
+            width: 280px;
+            background: white;
+            border-right: 1px solid #e5e7eb;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        .panel-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .node-category {
+            margin-bottom: 20px;
+        }
+        .category-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .node-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            background: #f9fafb;
+            border-radius: 8px;
+            cursor: grab;
+            transition: all 0.2s;
+        }
+        .node-item:hover {
+            background: #3498db;
+            color: white;
+            transform: translateX(4px);
+        }
+        .node-icon {
+            font-size: 18px;
+        }
+        .node-name {
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        /* 中间画布 */
+        .canvas-area {
+            flex: 1;
+            background: #f8f9fa;
+            position: relative;
+            overflow: hidden;
+        }
+        .canvas-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #9ca3af;
+        }
+        .canvas-placeholder .icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+        
+        /* 右侧属性面板 */
+        .props-panel {
+            width: 320px;
+            background: white;
+            border-left: 1px solid #e5e7eb;
+            padding: 16px;
+        }
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #9ca3af;
+        }
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        
+        /* 底部状态栏 */
+        .footer {
+            height: 32px;
+            background: #1f2937;
+            color: #9ca3af;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            font-size: 12px;
+        }
+        
+        /* 演示节点 */
+        .demo-node {
+            position: absolute;
+            min-width: 180px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            cursor: grab;
+        }
+        .demo-node.trigger { border-left: 4px solid #9b59b6; }
+        .demo-node.action { border-left: 4px solid #3498db; }
+        .demo-node.ai { border-left: 4px solid #e74c3c; }
+        .demo-node-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+            border-radius: 8px 8px 0 0;
+        }
+        .demo-node-body {
+            padding: 10px 12px;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        
+        /* 连接线演示 */
+        .connection-line {
+            position: absolute;
+            height: 2px;
+            background: #3498db;
+            transform-origin: left center;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部工具栏 -->
+    <div class="toolbar">
+        <div style="display: flex; align-items: center; gap: 20px;">
+            <div class="logo">🤖 AgentM</div>
+            <input type="text" value="我的工作流" style="padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; width: 200px;">
+        </div>
+        <div class="toolbar-buttons">
+            <button class="btn btn-primary">📄 新建</button>
+            <button class="btn btn-success">✅ 保存</button>
+            <button class="btn btn-primary">▶️ 运行</button>
+        </div>
+    </div>
+    
+    <!-- 主内容区 -->
+    <div class="main-content">
+        <!-- 左侧节点面板 -->
+        <div class="node-panel">
+            <div class="panel-title">📦 节点库</div>
+            
+            <div class="node-category">
+                <div class="category-title">⚡ 触发器</div>
+                <div class="node-item">
+                    <span class="node-icon">🔗</span>
+                    <span class="node-name">Webhook</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">⏰</span>
+                    <span class="node-name">定时任务</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">▶️</span>
+                    <span class="node-name">手动触发</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">📡</span>
+                    <span class="node-name">事件监听</span>
+                </div>
+            </div>
+            
+            <div class="node-category">
+                <div class="category-title">🛠️ 动作</div>
+                <div class="node-item">
+                    <span class="node-icon">🌐</span>
+                    <span class="node-name">HTTP 请求</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">💻</span>
+                    <span class="node-name">代码执行</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">🗄️</span>
+                    <span class="node-name">数据库查询</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">📁</span>
+                    <span class="node-name">文件操作</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">📧</span>
+                    <span class="node-name">邮件发送</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">⚖️</span>
+                    <span class="node-name">条件判断</span>
+                </div>
+            </div>
+            
+            <div class="node-category">
+                <div class="category-title">🤖 AI</div>
+                <div class="node-item">
+                    <span class="node-icon">🤖</span>
+                    <span class="node-name">LLM 调用</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">✍️</span>
+                    <span class="node-name">文本生成</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">🎨</span>
+                    <span class="node-name">图像生成</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">🎤</span>
+                    <span class="node-name">语音合成</span>
+                </div>
+            </div>
+            
+            <div class="node-category">
+                <div class="category-title">🔌 集成</div>
+                <div class="node-item">
+                    <span class="node-icon">💬</span>
+                    <span class="node-name">飞书消息</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">📱</span>
+                    <span class="node-name">钉钉消息</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">💭</span>
+                    <span class="node-name">Slack 消息</span>
+                </div>
+                <div class="node-item">
+                    <span class="node-icon">🏢</span>
+                    <span class="node-name">企业微信</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 中间画布 -->
+        <div class="canvas-area">
+            <div class="canvas-placeholder">
+                <div class="icon">🎨</div>
+                <div>从左侧拖拽节点到此处</div>
+                <div style="font-size: 12px; margin-top: 8px;">支持缩放（鼠标滚轮）和平移（拖拽）</div>
+            </div>
+            
+            <!-- 演示节点 -->
+            <div class="demo-node trigger" style="top: 100px; left: 200px;">
+                <div class="demo-node-header">
+                    <span class="node-icon">⏰</span>
+                    <span class="node-name">定时任务</span>
+                </div>
+                <div class="demo-node-body">Cron 定时触发</div>
+            </div>
+            
+            <div class="demo-node action" style="top: 200px; left: 500px;">
+                <div class="demo-node-header">
+                    <span class="node-icon">🌐</span>
+                    <span class="node-name">HTTP 请求</span>
+                </div>
+                <div class="demo-node-body">发送 HTTP 请求</div>
+            </div>
+            
+            <div class="demo-node ai" style="top: 300px; left: 800px;">
+                <div class="demo-node-header">
+                    <span class="node-icon">🤖</span>
+                    <span class="node-name">LLM 调用</span>
+                </div>
+                <div class="demo-node-body">调用大语言模型</div>
+            </div>
+            
+            <!-- 演示连接线 -->
+            <svg style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;">
+                <path d="M 380 130 C 440 130, 440 230, 500 230" stroke="#3498db" stroke-width="2" fill="none"/>
+                <path d="M 680 230 C 740 230, 740 330, 800 330" stroke="#3498db" stroke-width="2" fill="none"/>
+            </svg>
+        </div>
+        
+        <!-- 右侧属性面板 -->
+        <div class="props-panel">
+            <div class="panel-title">⚙️ 属性配置</div>
+            <div class="empty-state">
+                <div class="icon">⚙️</div>
+                <div>选择节点以配置属性</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 底部状态栏 -->
+    <div class="footer">
+        <div>📊 节点数：3 | 🔗 连接数：2</div>
+        <div>● 已保存 | Zoom: 100% | AgentM v2.0</div>
+    </div>
+    
+    <script>
+        // 简单的拖拽演示
+        const nodeItems = document.querySelectorAll('.node-item');
+        const canvasArea = document.querySelector('.canvas-area');
+        
+        nodeItems.forEach(item => {
+            item.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', item.querySelector('.node-name').textContent);
+                e.dataTransfer.effectAllowed = 'copy';
+            });
+        });
+        
+        canvasArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+        
+        canvasArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const nodeName = e.dataTransfer.getData('text/plain');
+            console.log('Drop:', nodeName);
+            alert('演示模式：节点 "' + nodeName + '" 已拖拽到画布\n\n完整功能请运行 Vue 项目：\ncd vue-project\nnpm install\nnpm run dev');
+        });
+        
+        // 画布缩放演示
+        let zoom = 1;
+        canvasArea.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            if (e.deltaY < 0) {
+                zoom = Math.min(zoom + 0.1, 2);
+            } else {
+                zoom = Math.max(zoom - 0.1, 0.5);
+            }
+            console.log('Zoom:', zoom);
+        });
+    </script>
+</body>
+</html>

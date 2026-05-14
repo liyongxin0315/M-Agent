@@ -1,0 +1,176 @@
+{
+  "workflow_name": "RAG 知识库检索增强工作流",
+  "version": "1.0.0",
+  "description": "基于 RAG 引擎的知识库检索增强工作流，支持文档入库、语义检索、混合排序和上下文增强查询",
+  "author": "AgentM",
+  "created_at": "2026-04-01",
+  
+  "config": {
+    "rag_engine": {
+      "persist_directory": "./agentm_data/rag_db",
+      "embedding_model": "all-MiniLM-L6-v2",
+      "collection_name": "agentm_knowledge",
+      "top_k": 5,
+      "rerank_strategy": "hybrid",
+      "bm25_k1": 1.5,
+      "bm25_b": 0.75,
+      "hybrid_alpha": 0.5,
+      "chunk_size": 500,
+      "chunk_overlap": 50
+    }
+  },
+  
+  "steps": [
+    {
+      "step_id": "init_rag",
+      "name": "初始化 RAG 引擎",
+      "description": "初始化向量数据库和嵌入模型",
+      "action": "rag_init",
+      "params": {
+        "config": "${config.rag_engine}"
+      },
+      "output_key": "rag_engine"
+    },
+    {
+      "step_id": "load_documents",
+      "name": "加载知识库文档",
+      "description": "从指定源加载文档到向量数据库",
+      "action": "rag_ingest",
+      "params": {
+        "engine": "${output.rag_engine}",
+        "documents": "${input.documents}",
+        "chunk": true,
+        "metadata": {
+          "source": "${input.source}",
+          "loaded_at": "${timestamp}"
+        }
+      },
+      "output_key": "ingestion_result",
+      "depends_on": ["init_rag"]
+    },
+    {
+      "step_id": "search_query",
+      "name": "语义检索",
+      "description": "对用户查询进行语义检索",
+      "action": "rag_search",
+      "params": {
+        "engine": "${output.rag_engine}",
+        "query": "${input.query}",
+        "top_k": 5,
+        "rerank_strategy": "hybrid",
+        "filter_metadata": "${input.filters}"
+      },
+      "output_key": "search_results",
+      "depends_on": ["load_documents"]
+    },
+    {
+      "step_id": "rerank_results",
+      "name": "结果重排序",
+      "description": "使用混合策略对检索结果重排序",
+      "action": "rag_rerank",
+      "params": {
+        "results": "${output.search_results}",
+        "strategy": "hybrid",
+        "alpha": 0.5
+      },
+      "output_key": "ranked_results",
+      "depends_on": ["search_query"]
+    },
+    {
+      "step_id": "build_context",
+      "name": "构建上下文",
+      "description": "将检索结果构建为 LLM 可用的上下文",
+      "action": "context_build",
+      "params": {
+        "results": "${output.ranked_results}",
+        "template": "[来源 {rank}] {content}\\n\\n",
+        "max_length": 4000
+      },
+      "output_key": "context",
+      "depends_on": ["rerank_results"]
+    },
+    {
+      "step_id": "llm_query",
+      "name": "LLM 增强查询",
+      "description": "使用检索上下文增强 LLM 查询",
+      "action": "llm_augmented_query",
+      "params": {
+        "query": "${input.query}",
+        "context": "${output.context}",
+        "prompt_template": "基于以下上下文回答问题:\\n\\n{context}\\n\\n问题：{query}\\n\\n请基于上下文提供准确的回答。",
+        "model": "${input.model}",
+        "temperature": 0.7,
+        "max_tokens": 2000
+      },
+      "output_key": "final_response",
+      "depends_on": ["build_context"]
+    }
+  ],
+  
+  "error_handling": {
+    "retry_policy": {
+      "max_retries": 3,
+      "retry_delay_seconds": 2,
+      "exponential_backoff": true
+    },
+    "fallback": {
+      "on_rag_failure": "direct_llm_query",
+      "on_llm_failure": "return_search_results"
+    }
+  },
+  
+  "output_schema": {
+    "query": "string",
+    "search_results": [
+      {
+        "id": "string",
+        "content": "string",
+        "score": "number",
+        "rank": "integer",
+        "metadata": "object"
+      }
+    ],
+    "context": "string",
+    "final_response": "string",
+    "execution_time_ms": "number"
+  },
+  
+  "example_usage": {
+    "input": {
+      "documents": [
+        "Python 是一种高级编程语言，由 Guido van Rossum 于 1989 年发明。",
+        "机器学习是人工智能的一个分支，它使计算机能够从数据中学习。",
+        "深度学习使用神经网络来模拟人脑的工作方式。"
+      ],
+      "source": "knowledge_base",
+      "query": "什么是机器学习？",
+      "model": "gpt-4",
+      "filters": {
+        "source": "knowledge_base"
+      }
+    },
+    "expected_output": {
+      "query": "什么是机器学习？",
+      "search_results": [
+        {
+          "id": "doc-123",
+          "content": "机器学习是人工智能的一个分支...",
+          "score": 0.85,
+          "rank": 1,
+          "metadata": {"source": "knowledge_base"}
+        }
+      ],
+      "context": "[来源 1] 机器学习是人工智能的一个分支...",
+      "final_response": "机器学习是人工智能的一个重要分支，它...",
+      "execution_time_ms": 1250
+    }
+  },
+  
+  "metrics": {
+    "retrieval_precision": "检索结果的相关性",
+    "retrieval_recall": "相关文档的召回率",
+    "response_accuracy": "最终回答的准确性",
+    "latency_p50": "P50 延迟",
+    "latency_p99": "P99 延迟"
+  }
+}
