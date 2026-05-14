@@ -24,6 +24,7 @@ from ..agents import get_executor, ExecutorAgent
 
 class IntentType(Enum):
     """意图类型"""
+    CHAT = "chat"                    # 闲聊/打招呼
     CODE_GENERATE = "code_generate"   # 生成代码
     CODE_FIX = "code_fix"            # 修复bug
     CODE_REFACTOR = "code_refactor"   # 重构
@@ -71,17 +72,22 @@ class IntentParser:
     """意图解析器：分析用户指令，决定意图类型和复杂度"""
 
     KEYWORDS = {
+        IntentType.CHAT: [
+            "你好", "hi", "hello", "嗨", "hey", "早上好", "下午好", "晚上好",
+            "你是谁", "叫什么", "干什么的", "有什么功能", "能做什么",
+        ],
         IntentType.CODE_GENERATE: [
-            "写", "生成", "帮我写", "实现", "创建", "generate", "write", "create",
+            "写", "生成", "帮我写", "实现", "创建", "代码", "function", "def ",
+            "class ", "帮我写个", "写一个", "generate", "write", "create",
         ],
         IntentType.CODE_FIX: [
-            "修复", "bug", "报错", "崩了", "fix", "repair", "debug",
+            "修复", "bug", "报错", "崩了", "fix", "repair", "debug", "错误",
         ],
         IntentType.CODE_REFACTOR: [
             "重构", "优化", "重写", "改写", "refactor", "optimize",
         ],
         IntentType.CODE_REVIEW: [
-            "审查", "review", "检查", "看看这段代码",
+            "审查", "review", "检查代码", "看看这段代码", "分析代码",
         ],
     }
 
@@ -185,6 +191,9 @@ class Coordinator:
                           IntentType.CODE_REFACTOR, IntentType.CODE_REVIEW):
                 async for chunk in self._run_code_task(task):
                     yield chunk
+            elif intent == IntentType.CHAT:
+                async for chunk in self._run_chat(task):
+                    yield chunk
             else:
                 yield f"[Coordinator] 未知意图类型，跳过执行\n"
                 task.status = TaskStatus.FAILED
@@ -222,6 +231,20 @@ class Coordinator:
                 self.state.completed_task_ids.append(task.task_id)
 
         yield f"\n[Coordinator] 执行Agent返回结果，已记录\n"
+
+    async def _run_chat(self, task: Task) -> AsyncGenerator[str, None]:
+        """闲聊类任务：直接调用 LLM 生成回复"""
+        yield f"[Coordinator] → 闲聊模式\n"
+        from ..core.llm_engine import get_reasoning_engine
+        llm = get_reasoning_engine()
+        response = llm.generate(
+            prompt=task.description,
+            system="你是一个友好、有用的AI助手。用户跟你打招呼，简洁回复即可。",
+        )
+        yield f"\n{response}\n"
+        task.result = response
+        task.status = TaskStatus.COMPLETED
+        self.state.completed_task_ids.append(task.task_id)
 
     def get_state(self) -> dict:
         """获取当前状态快照"""
