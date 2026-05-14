@@ -2,11 +2,11 @@
 FastAPI 接口：M-Agent HTTP API
 
 启动：
-  cd D:\agentm
+  cd D:/agentm
   python -m uvicorn agentm.interfaces.api.main:app --reload --port 8766
 
 日志：
-  所有请求记录到 D:\agentm\logs\api_requests.log
+  所有请求记录到 D:/agentm/logs/api_requests.log
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from agentm.main_agent.state_manager import get_state_manager
 
 # === 日志配置 ===
 
-LOG_DIR = Path("D:/agentm/logs")
+LOG_DIR = Path(r"D:\agentm\logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "api_requests.log"
 
@@ -186,11 +186,15 @@ async def execute_stream(req: ExecuteRequest):
         coord.session_id = req.session_id
 
     async def event_generator():
-        async for chunk in coord.run(req.prompt):
-            # SSE-safe: 换行转为 \\n，data: 行单独处理
-            safe = chunk.replace("\\n", "\\\\n").replace("\n", "\\n")
-            yield f"data: {safe}\n\n"
-        yield "data: [DONE]\n\n"
+        try:
+            async for chunk in coord.run(req.prompt):
+                # SSE-safe: 换行转为\\n
+                safe = chunk.replace("\\", "\\\\").replace("\n", "\\n")
+                yield f"data: {safe}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+            yield f"data: [ERROR]{str(e)}\n\n"
 
     return StreamingResponse(
         event_generator(),
