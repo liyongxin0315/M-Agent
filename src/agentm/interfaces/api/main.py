@@ -623,7 +623,7 @@ def main():
         "agentm.interfaces.api.main:app",
         host="0.0.0.0",
         port=8766,
-        reload=False,
+        reload=True,   # 开发时 True，改代码自动重启
         log_level="info",
     )
 
