@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Callable
 from loguru import logger
 
-from .llm_engine import get_llm_engine, LLMEngine
+from .llm_engine import get_llm_engine, get_coding_engine, LLMEngine
 from .z3_engine import get_z3_engine, Z3Engine, Verdict
 
 
@@ -60,7 +60,7 @@ class ReasoningRouter:
         llm_engine: LLMEngine | None = None,
         z3_engine: Z3Engine | None = None,
     ):
-        self.llm = llm_engine or get_llm_engine()
+        self.llm = llm_engine or get_coding_engine()  # 代码专项模型
         self.z3 = z3_engine or get_z3_engine()
 
         # 记忆：同类任务的最佳模式（task_pattern → mode）

@@ -36,7 +36,7 @@ L  - 学习算子     任务学习 + 元学习
 
 | 模块 | 技术 |
 |------|------|
-| LLM 推理 | Ollama + qwen3 |
+| LLM 推理 | Ollama + qwen3:8b + deepseek-coder:6.7b |
 | 符号引擎 | Z3 SMT Solver |
 | 记忆 | ChromaDB + Sentence-Transformers |
 | API | FastAPI |
@@ -45,35 +45,42 @@ L  - 学习算子     任务学习 + 元学习
 ## 快速开始
 
 ```bash
-# 安装依赖
-cd D:\agentm
-pip install -e .
+# 1. 安装依赖
+pip install -e D:\agentm
 
-# 启动 Ollama（确保 qwen3 已下载）
-ollama run qwen3
+# 2. 下载模型
+ollama pull qwen3:8b-q4_K_M
+ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
-# 运行示例任务
-python -m agentm.interfaces.cli.main "帮我写一个快速排序函数"
+# 3. 启动 Ollama
+ollama serve
+
+# 4. 启动 API（端口 8766）
+python -m agentm.interfaces.api.main
+
+# 5. 访问网页界面
+# http://localhost:8766
 ```
 
 ## 目录结构
 
 ```
 D:\agentm\
-├── src\agentm\          # 核心源码
-│   ├── core\            # 核心引擎（LLM / Z3 / 路由）
-│   ├── agents\          # 子Agent（执行Agent）
-│   ├── main_agent\      # 主Agent（协调层）
-│   ├── memory\          # 记忆系统
-│   ├── knowledge\       # 知识库
-│   ├── evaluation\      # 评估系统
-│   ├── learning\        # 学习系统
-│   ├── evolution\       # 自进化系统
-│   └── interfaces\     # 接口层（CLI / API / Web / Robot）
-├── configs\             # 配置文件
-├── sandbox\             # 沙箱（自进化用）
-├── logs\                # 日志
-└── tests\               # 测试
+├── src/agentm/           # 核心源码
+│   ├── core/             # 核心引擎（LLM / Z3 / 路由）
+│   ├── agents/          # 子Agent（执行Agent）
+│   ├── main_agent/       # 主Agent（协调层）
+│   ├── memory/          # 记忆系统（ChromaDB）
+│   ├── knowledge/       # 知识库（代码规范）
+│   ├── evaluation/      # 评估系统（Benchmark）
+│   ├── learning/        # 学习系统（策略学习）
+│   ├── evolution/        # 自进化系统
+│   └── interfaces/      # 接口层（CLI/API/Web/ROS2）
+├── configs/              # 配置文件
+├── models/              # Ollama 模型（需单独下载）
+├── sandbox/             # 沙箱（自进化用）
+├── logs/                # 日志
+└── tests/              # 测试
 ```
 
 ## 执行流程
@@ -91,6 +98,13 @@ D:\agentm\
 自进化系统检查：这次比上次进步了吗？
 ```
 
+## 模型说明
+
+| 模型 | 用途 | VRAM |
+|------|------|------|
+| qwen3:8b-q4_K_M | 通用推理、意图理解 | ~6GB |
+| deepseek-coder:6.7b | 代码生成、审查、调试 | ~5.5GB |
+
 ## 状态
 
-🟡 **开发中** - 执行 Agent 已完成，其他模块陆续开发中
+🟡 **开发中** - 所有核心模块已完成，待实际运行验证

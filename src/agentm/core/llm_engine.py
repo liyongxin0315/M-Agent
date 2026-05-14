@@ -14,8 +14,14 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 
-DEFAULT_MODEL = "qwen3"
+# 模型配置（见 configs/models.yaml）
+# 通用推理: qwen3:8b-q4_K_M
+# 代码专项: deepseek-coder:6.7b-instruct-q4_K_M
+DEFAULT_MODEL = "qwen3:8b-q4_K_M"
 DEFAULT_HOST = "http://127.0.0.1:11434"
+
+CODING_MODEL = "deepseek-coder:6.7b-instruct-q4_K_M"
+REASONING_MODEL = "qwen3:8b-q4_K_M"
 
 
 class LLMEngine:
@@ -99,3 +105,13 @@ def init_llm_engine(model: str = DEFAULT_MODEL, host: str = DEFAULT_HOST, **kwar
     global _llm_engine
     _llm_engine = LLMEngine(model=model, host=host, **kwargs)
     return _llm_engine
+
+
+def get_coding_engine() -> LLMEngine:
+    """代码专项模型引擎"""
+    return LLMEngine(model=CODING_MODEL)
+
+
+def get_reasoning_engine() -> LLMEngine:
+    """通用推理模型引擎"""
+    return LLMEngine(model=REASONING_MODEL)

@@ -1,0 +1,37 @@
+# M-Agent 模型配置
+# 模型保存路径：D:\agentm\models
+
+models:
+  # 通用推理模型（qwen3）
+  reasoning:
+    name: "qwen3:8b-q4_K_M"
+    path: "D:/agentm/models"
+    vram_mb: ~6000
+    use_case: "通用推理、意图理解、任务拆解"
+
+  # 代码专项模型（deepseek-coder）
+  coding:
+    name: "deepseek-coder:6.7b-instruct-q4_K_M"
+    path: "D:/agentm/models"
+    vram_mb: ~5500
+    use_case: "代码生成、审查、调试、重构"
+
+# Ollama 配置
+ollama:
+  host: "http://127.0.0.1:11434"
+  # 默认使用代码模型（M-Agent 第一专项）
+  default_model: "deepseek-coder:6.7b-instruct-q4_K_M"
+
+# 模型选择策略
+model_selection:
+  # 简单任务（< 50行代码）
+  simple: "deepseek-coder:6.7b-instruct-q4_K_M"
+
+  # 复杂任务（> 50行或需要多步推理）
+  complex: "qwen3:8b-q4_K_M"
+
+  # 意图理解/任务拆解（主Agent）
+  coordinator: "qwen3:8b-q4_K_M"
+
+  # 代码审查/生成（执行Agent）
+  executor: "deepseek-coder:6.7b-instruct-q4_K_M"
