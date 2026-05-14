@@ -5,21 +5,22 @@ FastAPI 接口：M-Agent HTTP API
   cd D:\agentm
   python -m uvicorn agentm.interfaces.api.main:app --reload --port 8766
 
-测试：
-  curl -X POST http://127.0.0.1:8766/execute \
-    -H "Content-Type: application/json" \
-    -d "{\"prompt\": \"帮我写一个快排\"}"
+日志：
+  所有请求记录到 D:\agentm\logs\api_requests.log
 """
 
 from __future__ import annotations
 
-import asyncio
 import uuid
+import time
+import json
+import asyncio
+from pathlib import Path
+from datetime import datetime
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import AsyncGenerator
+from functools import wraps
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -30,12 +31,36 @@ from agentm.main_agent.coordinator import Coordinator, get_coordinator
 from agentm.main_agent.state_manager import get_state_manager
 
 
-# === Request/Response Models ===
+# === 日志配置 ===
+
+LOG_DIR = Path("D:/agentm/logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "api_requests.log"
+
+# 移除默认 handler，添加文件 handler
+logger.remove()
+logger.add(
+    LOG_FILE,
+    rotation="10 MB",
+    retention="7 days",
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+    encoding="utf-8",
+)
+# 同时输出到 stderr
+logger.add(
+    lambda msg: print(msg, end=""),
+    level="INFO",
+    format="<green>{time:HH:mm:ss}</green> | {level} | <blue>{message}</blue>",
+)
+
+
+# === Request Model ===
 
 class ExecuteRequest(BaseModel):
     prompt: str = Field(..., description="用户指令")
-    session_id: str | None = Field(None, description="会话ID，不提供则自动生成")
-    stream: bool = Field(True, description="是否流式输出")
+    session_id: str | None = Field(None, description="会话ID")
+    stream: bool = Field(True, description="是否流式")
 
 
 class ExecuteResponse(BaseModel):
@@ -75,7 +100,6 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -85,156 +109,68 @@ app.add_middleware(
 )
 
 
+# === 请求日志中间件 ===
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """记录所有请求到日志文件"""
+    req_id = str(uuid.uuid4())[:8]
+    start = time.time()
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 跳过 favicon
+    if request.url.path == "/favicon.ico":
+        return await call_next(request)
+
+    # 读取 body（如果是 POST）
+    body = ""
+    if request.method == "POST":
+        body_bytes = await request.body()
+        body = body_bytes.decode("utf-8", errors="replace")
+        # 截断过长 body
+        if len(body) > 200:
+            body = body[:200] + "..."
+
+    logger.info(
+        f"[{req_id}] {request.method} {request.url.path} | "
+        f"IP:{request.client.host if request.client else '?'} | "
+        f"BODY:{body}"
+    )
+
+    response = await call_next(request)
+    elapsed = (time.time() - start) * 1000
+
+    logger.info(f"[{req_id}] → {response.status_code} ({elapsed:.0f}ms)")
+
+    return response
+
+
 # === Routes ===
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """健康检查"""
     return HealthResponse(status="ok", version="0.1.0")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    """网页界面"""
     return _HTML_UI
-
-
-# ---------------------------------------------------------------------------
-# Inline Web UI HTML
-# ---------------------------------------------------------------------------
-
-_HTML_UI = """
-<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="UTF-8">
-<title>M-Agent</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
-  header { background: #1a1a1a; border-bottom: 1px solid #333; padding: 12px 20px; display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 16px; font-weight: 600; color: #fff; }
-  .status { width: 8px; height: 8px; border-radius: 50%; background: #444; }
-  .status.online { background: #4ade80; }
-  main { flex: 1; display: flex; overflow: hidden; }
-  .sidebar { width: 240px; background: #1a1a1a; border-right: 1px solid #333; padding: 16px; overflow-y: auto; }
-  .sidebar h3 { font-size: 11px; text-transform: uppercase; color: #666; letter-spacing: 0.05em; margin-bottom: 12px; }
-  .history-item { padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; cursor: pointer; font-size: 13px; }
-  .history-item:hover { background: #2a2a2a; }
-  .chat-area { flex: 1; display: flex; flex-direction: column; }
-  .output { flex: 1; overflow-y: auto; padding: 20px; font-family: 'SF Mono', 'Consolas', monospace; font-size: 13px; line-height: 1.6; }
-  .output-line { white-space: pre-wrap; word-break: break-all; }
-  .output-line.system { color: #6b7280; }
-  .output-line.user { color: #60a5fa; }
-  .output-line.agent { color: #a78bfa; }
-  .output-line.error { color: #f87171; }
-  .output-line.success { color: #4ade80; }
-  .input-area { padding: 16px 20px; background: #1a1a1a; border-top: 1px solid #333; display: flex; gap: 8px; }
-  input { flex: 1; background: #2a2a2a; border: 1px solid #333; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 14px; outline: none; }
-  input:focus { border-color: #6b7280; }
-  button { background: #6366f1; color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
-  button:hover { background: #4f46e5; }
-  button:disabled { background: #333; color: #666; cursor: not-allowed; }
-</style>
-</head>
-<body>
-<header>
-  <div class="status online"></div>
-  <h1>M-Agent</h1>
-</header>
-<main>
-  <div class="sidebar">
-    <h3>History</h3>
-    <div id="history"></div>
-  </div>
-  <div class="chat-area">
-    <div class="output" id="output"></div>
-    <div class="input-area">
-      <input id="prompt" placeholder="Enter your task..." onkeydown="if(event.key==='Enter')send()">
-      <button id="sendBtn" onclick="send()">Send</button>
-    </div>
-  </div>
-</main>
-<script>
-  let sessionId = null;
-  const output = document.getElementById('output');
-  const prompt = document.getElementById('prompt');
-  const sendBtn = document.getElementById('sendBtn');
-
-  function append(text, cls='') {
-    const div = document.createElement('div');
-    div.className = 'output-line ' + cls;
-    div.textContent = text;
-    output.appendChild(div);
-    output.scrollTop = output.scrollHeight;
-  }
-
-  async function send() {
-    const text = prompt.value.trim();
-    if (!text) return;
-    prompt.value = '';
-    sendBtn.disabled = true;
-    append('> ' + text, 'user');
-    append('', 'system');
-
-    try {
-      const res = await fetch('/execute/stream', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({prompt: text, session_id: sessionId}),
-      });
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const {done, value} = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, {stream: true});
-        const lines = buffer.split('\\n');
-        buffer = lines.pop();
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-            append(data, 'agent');
-          }
-        }
-      }
-      append('', 'system');
-    } catch (e) {
-      append('Error: ' + e.message, 'error');
-    }
-    sendBtn.disabled = false;
-    prompt.focus();
-  }
-</script>
-</body>
-</html>
-"""
 
 
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest):
-    """
-    同步执行（非流式）
-    适用于程序调用
-    """
     coord = get_coordinator()
     if req.session_id:
         coord.session_id = req.session_id
 
     chunks = []
     task_id = None
-
     async for chunk in coord.run(req.prompt):
         chunks.append(chunk)
-        # 从第一个chunk提取task_id
         if task_id is None and "[Coordinator] 任务ID:" in chunk:
             task_id = chunk.split("任务ID:")[1].split("\n")[0].strip()
 
     result_text = "".join(chunks)
-
     return ExecuteResponse(
         session_id=coord.session_id,
         task_id=task_id or "unknown",
@@ -245,23 +181,15 @@ async def execute(req: ExecuteRequest):
 
 @app.post("/execute/stream")
 async def execute_stream(req: ExecuteRequest):
-    """
-    流式执行
-    适用于浏览器/终端实时看到思考过程
-
-    curl 示例：
-      curl -N -X POST http://127.0.0.1:8766/execute/stream \
-        -H "Content-Type: application/json" \
-        -d "{\"prompt\": \"帮我写一个快排\"}"
-    """
     coord = get_coordinator()
     if req.session_id:
         coord.session_id = req.session_id
 
     async def event_generator():
         async for chunk in coord.run(req.prompt):
-            # SSE 格式
-            yield f"data: {chunk}\n\n"
+            # SSE-safe: 换行转为 \\n，data: 行单独处理
+            safe = chunk.replace("\\n", "\\\\n").replace("\n", "\\n")
+            yield f"data: {safe}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -277,13 +205,10 @@ async def execute_stream(req: ExecuteRequest):
 
 @app.get("/state/{session_id}", response_model=StateResponse)
 async def get_state(session_id: str):
-    """查询会话状态"""
     sm = get_state_manager()
     state = sm.load_state()
-
     if state is None or state.session_id != session_id:
         raise HTTPException(status_code=404, detail="Session not found")
-
     return StateResponse(
         session_id=state.session_id,
         total_tasks=len(state.tasks),
@@ -294,15 +219,397 @@ async def get_state(session_id: str):
 
 @app.delete("/state/{session_id}")
 async def clear_state(session_id: str):
-    """清除会话状态"""
     sm = get_state_manager()
-    state = sm.load_state()
-
-    if state is None or state.session_id != session_id:
-        raise HTTPException(status_code=404, detail="Session not found")
-
     sm.clear()
     return {"status": "cleared", "session_id": session_id}
+
+
+# === Web UI (美化版) ===
+
+_HTML_UI = """
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M-Agent</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --sidebar-bg: #161b22;
+    --input-bg: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --user-bubble: #3b4cc0;
+    --agent-bubble: #21262d;
+    --user-text: #ffffff;
+    --agent-text: #e6edf3;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .header {
+    background: var(--sidebar-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .header h1 { font-size: 15px; font-weight: 600; color: #fff; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; flex-shrink: 0; }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; }
+  .btn-clear {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-clear:hover { background: var(--border); color: var(--text); }
+
+  /* Main layout */
+  .main { flex: 1; display: flex; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .sidebar-header {
+    padding: 14px 16px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+  }
+  .history-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+  .history-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+  }
+  .history-item:hover { background: #21262d; color: var(--text); }
+  .history-empty { padding: 16px; font-size: 12px; color: var(--text-dim); text-align: center; }
+
+  /* Chat area */
+  .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Messages */
+  .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+  .msg { display: flex; gap: 10px; max-width: 80%; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg.agent { align-self: flex-start; }
+
+  .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .msg.user .avatar { background: var(--accent); color: #fff; }
+  .msg.agent .avatar { background: var(--border); color: var(--text-dim); }
+
+  .bubble {
+    background: var(--agent-bubble);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--agent-text);
+  }
+  .msg.user .bubble { background: var(--user-bubble); border-color: var(--user-bubble); color: var(--user-text); }
+
+  /* Loading */
+  .loading {
+    display: flex; gap: 10px; align-items: center;
+    color: var(--text-dim); font-size: 13px;
+    padding: 4px 0;
+  }
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Input area */
+  .input-area {
+    padding: 12px 20px 16px;
+    background: var(--sidebar-bg);
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .input-area input {
+    flex: 1;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .input-area input:focus { border-color: var(--accent); }
+  .input-area input::placeholder { color: var(--text-dim); }
+  .btn-send {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .btn-send:hover { background: var(--accent-hover); }
+  .btn-send:disabled { background: var(--border); cursor: not-allowed; }
+
+  /* Welcome */
+  .welcome { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+  .welcome h2 { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+  .welcome p { font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="dot"></div>
+  <h1>M-Agent</h1>
+  <div class="header-actions">
+    <button class="btn-clear" onclick="clearHistory()">New Chat</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-header">History</div>
+    <div class="history-list" id="historyList">
+      <div class="history-empty">No history yet</div>
+    </div>
+  </div>
+  <div class="chat-area">
+    <div class="messages" id="messages">
+      <div class="welcome">
+        <h2>你好，我是 M-Agent</h2>
+        <p>我能帮你写代码、审查代码、修复bug，也可以聊聊</p>
+      </div>
+    </div>
+    <div class="input-area">
+      <input id="prompt" placeholder="输入你的任务..." onkeydown="if(event.key==='Enter' && !event.shiftKey)send()">
+      <button class="btn-send" id="sendBtn" onclick="send()">发送</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SESSION_KEY = 'magent_session';
+  const HISTORY_KEY = 'magent_history';
+  let currentSession = localStorage.getItem(SESSION_KEY) || null;
+  let loading = false;
+
+  const messages = document.getElementById('messages');
+  const promptEl = document.getElementById('prompt');
+  const sendBtn = document.getElementById('sendBtn');
+
+  // Load history
+  function loadHistory() {
+    const list = document.getElementById('historyList');
+    const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
+    const keys = Object.keys(all).reverse();
+    if (keys.length === 0) {
+      list.innerHTML = '<div class="history-empty">No history yet</div>';
+      return;
+    }
+    list.innerHTML = keys.map(k => `
+      <div class="history-item" onclick="loadSession('${k}')">${escapeHtml(all[k].title || k)}</div>
+    `).join('');
+  }
+
+  function loadSession(id) {
+    const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
+    const sess = all[id];
+    if (!sess) return;
+    localStorage.setItem(SESSION_KEY, id);
+    currentSession = id;
+    renderMessages(sess.messages);
+  }
+
+  function renderMessages(msgs) {
+    messages.innerHTML = '';
+    if (msgs.length === 0) {
+      messages.innerHTML = '<div class="welcome"><h2>你好，我是 M-Agent</h2><p>我能帮你写代码、审查代码、修复bug，也可以聊聊</p></div>';
+      return;
+    }
+    msgs.forEach(m => addMessage(m.role, m.content, false));
+  }
+
+  function saveMessage(role, content) {
+    const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
+    if (!currentSession) {
+      currentSession = Date.now().toString();
+      localStorage.setItem(SESSION_KEY, currentSession);
+    }
+    if (!all[currentSession]) all[currentSession] = { title: '', messages: [] };
+    all[currentSession].messages.push({ role, content });
+    // 用第一条用户消息做标题
+    if (role === 'user' && !all[currentSession].title) {
+      all[currentSession].title = content.slice(0, 30);
+    }
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
+    loadHistory();
+  }
+
+  function clearHistory() {
+    localStorage.removeItem(SESSION_KEY);
+    currentSession = null;
+    messages.innerHTML = '<div class="welcome"><h2>你好，我是 M-Agent</h2><p>我能帮你写代码、审查代码、修复bug，也可以聊聊</p></div>';
+    loadHistory();
+  }
+
+  function escapeHtml(t) {
+    return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function addMessage(role, content, save=true) {
+    // Remove welcome if first real message
+    const welcome = messages.querySelector('.welcome');
+    if (welcome) messages.removeChild(welcome);
+
+    const div = document.createElement('div');
+    div.className = 'msg ' + role;
+    div.innerHTML = `
+      <div class="avatar">${role === 'user' ? 'U' : 'M'}</div>
+      <div class="bubble">${escapeHtml(content)}</div>
+    `;
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+    if (save) saveMessage(role, content);
+  }
+
+  function setLoading(on) {
+    loading = on;
+    sendBtn.disabled = on;
+    sendBtn.textContent = on ? '思考中...' : '发送';
+  }
+
+  function showLoading() {
+    const div = document.createElement('div');
+    div.className = 'msg agent';
+    div.id = 'loadingMsg';
+    div.innerHTML = '<div class="avatar">M</div><div class="bubble"><div class="loading"><div class="spinner"></div>思考中...</div></div>';
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function removeLoading() {
+    const el = document.getElementById('loadingMsg');
+    if (el) el.remove();
+  }
+
+  async function send() {
+    const text = promptEl.value.trim();
+    if (!text || loading) return;
+
+    promptEl.value = '';
+    addMessage('user', text);
+    showLoading();
+    setLoading(true);
+
+    try {
+      const body = { prompt: text };
+      if (currentSession) body.session_id = currentSession;
+
+      const res = await fetch('/execute/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      removeLoading();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let reply = '';
+
+      // 创建 agent 消息气泡
+      const agentDiv = document.createElement('div');
+      agentDiv.className = 'msg agent';
+      agentDiv.innerHTML = '<div class="avatar">M</div><div class="bubble" id="agentBubble"></div>';
+      messages.appendChild(agentDiv);
+      const bubble = document.getElementById('agentBubble');
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+          // 解码：\\\\n → 真实换行，\\n → 换行
+          const decoded = data.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\n/, '\n');
+          bubble.textContent += decoded;
+          reply += decoded;
+          messages.scrollTop = messages.scrollHeight;
+        }
+      }
+      if (reply) saveMessage('agent', reply);
+    } catch (e) {
+      removeLoading();
+      const errDiv = document.createElement('div');
+      errDiv.className = 'msg agent';
+      errDiv.innerHTML = '<div class="avatar">M</div><div class="bubble" style="color:#f87171">Error: ' + escapeHtml(e.message) + '</div>';
+      messages.appendChild(errDiv);
+    }
+    setLoading(false);
+    loadHistory();
+  }
+
+  // Init
+  loadHistory();
+  promptEl.focus();
+</script>
+</body>
+</html>
+"""
 
 
 # === Entry Point ===
