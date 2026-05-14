@@ -154,7 +154,10 @@ async def health():
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return _HTML_UI
+    # Serve the standalone HTML file (avoids indentation issues)
+    from pathlib import Path
+    html_path = Path(__file__).parent.parent / "web" / "ui.html"
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"), media_type="text/html")
 
 
 @app.post("/execute", response_model=ExecuteResponse)
@@ -614,6 +617,12 @@ _HTML_UI = """
 </body>
 </html>
 """
+
+# 去除 Python 源码带来的每行缩进（只在模块加载时执行一次）
+_lines = _HTML_UI.split('\n')
+_min_indent = min((len(l) - len(l.lstrip()) for l in _lines if l.strip()), default=0)
+if _min_indent > 0:
+    _HTML_UI = '\n'.join(l[_min_indent:] if len(l) >= _min_indent else l for l in _lines)
 
 
 # === Entry Point ===
