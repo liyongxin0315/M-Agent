@@ -12,11 +12,10 @@
 from __future__ import annotations
 
 import uuid
-import asyncio
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, AsyncGenerator
 from loguru import logger
 
 from ..agents import get_executor, ExecutorAgent
@@ -60,16 +59,28 @@ class Task:
 
 @dataclass
 class CoordinatorState:
-    """协调器全局状态"""
+    """协调器状态"""
     session_id: str
     tasks: dict[str, Task] = field(default_factory=dict)
     completed_task_ids: list[str] = field(default_factory=list)
     failed_task_ids: list[str] = field(default_factory=list)
-    context: dict = field(default_factory=dict)  # 跨任务上下文
+    context: dict[str, Any] = field(default_factory=dict)
+
+
+class ResultAggregator:
+    """聚合多次执行结果"""
+    def __init__(self):
+        self.parts: list[str] = []
+
+    def add_chunk(self, chunk: str):
+        self.parts.append(chunk)
+
+    def get_result(self) -> str:
+        return "".join(self.parts)
 
 
 class IntentParser:
-    """意图解析器：分析用户指令，决定意图类型和复杂度"""
+    """意图解析器"""
 
     KEYWORDS = {
         IntentType.CHAT: [
@@ -83,76 +94,26 @@ class IntentParser:
             "class ", "帮我写个", "写一个", "generate", "write", "create",
         ],
         IntentType.CODE_FIX: [
-            "修复", "bug", "报错", "崩了", "fix", "repair", "debug", "错误",
+            "修复", "fix", "bug", "报错", "错误", "问题", "修复它",
         ],
         IntentType.CODE_REFACTOR: [
-            "重构", "优化", "重写", "改写", "refactor", "optimize",
+            "重构", "refactor", "优化代码", "改进",
         ],
         IntentType.CODE_REVIEW: [
-            "审查", "review", "检查代码", "看看这段代码", "分析代码",
+            "审查", "review", "评审", "看看代码",
         ],
     }
 
     def parse(self, prompt: str) -> tuple[IntentType, str]:
-        """
-        解析用户指令
-        返回：(意图类型, 任务描述)
-        """
         prompt_lower = prompt.lower().strip()
-
         for intent, keywords in self.KEYWORDS.items():
             for kw in keywords:
-                if kw in prompt_lower:
+                if kw.lower() in prompt_lower:
                     return intent, prompt
-
-        # 默认按代码生成处理（因为这是第一个专项）
         return IntentType.CODE_GENERATE, prompt
-
-    def extract_task_description(self, prompt: str) -> str:
-        """提取核心任务描述（去掉语气词和废话）"""
-        # 简化版：去掉「帮我」「请」等
-        desc = prompt.strip()
-        for prefix in ["帮我", "请", "能不能", "可以不可以"]:
-            if desc.startswith(prefix):
-                desc = desc[len(prefix):]
-        return desc
-
-
-class ResultAggregator:
-    """结果汇总器：将各子Agent的结果汇总成统一输出"""
-
-    def __init__(self):
-        self._chunks: list[str] = []
-
-    def add_chunk(self, chunk: str):
-        self._chunks.append(chunk)
-
-    def add_result(self, result: Any):
-        self._chunks.append(str(result))
-
-    def aggregate(self, format: str = "text") -> str:
-        """汇总所有结果片段"""
-        if format == "text":
-            return "\n".join(self._chunks)
-        elif format == "json":
-            import json
-            return json.dumps({"chunks": self._chunks}, ensure_ascii=False)
-        return "\n".join(self._chunks)
-
-    def reset(self):
-        self._chunks.clear()
 
 
 class Coordinator:
-    """
-    主Agent 协调器
-
-    使用方式：
-      coord = Coordinator()
-      async for chunk in coord.run("帮我写一个快排"):
-          print(chunk, end="", flush=True)
-    """
-
     def __init__(
         self,
         executor: ExecutorAgent | None = None,
@@ -168,8 +129,8 @@ class Coordinator:
     async def run(self, prompt: str) -> AsyncGenerator[str, None]:
         """
         异步流式执行：接收任务 → 分析 → 分发 → 流式输出结果
+        SSE只输出实际回复内容，内部日志写到文件
         """
-        # 1. 意图解析
         intent, task_desc = self.intent_parser.parse(prompt)
         task_id = str(uuid.uuid4())[:8]
         task = Task(
@@ -179,16 +140,12 @@ class Coordinator:
         )
         self.state.tasks[task_id] = task
 
-        yield f"[Coordinator] 会话ID: {self.session_id}\n"
-        yield f"[Coordinator] 任务ID: {task_id}\n"
-        yield f"[Coordinator] 意图: {intent.value}\n"
-        yield f"[Coordinator] 任务: {task_desc}\n\n"
+        logger.info(f"[Coordinator] 会话ID: {self.session_id} | 任务ID: {task_id} | 意图: {intent.value} | 任务: {task_desc}")
 
         task.status = TaskStatus.RUNNING
         task.started_at = time.time()
 
         try:
-            # 2. 根据意图类型分发
             if intent in (IntentType.CODE_GENERATE, IntentType.CODE_FIX,
                           IntentType.CODE_REFACTOR, IntentType.CODE_REVIEW):
                 async for chunk in self._run_code_task(task):
@@ -197,7 +154,6 @@ class Coordinator:
                 for chunk in self._run_chat(task):
                     yield chunk
             else:
-                yield f"[Coordinator] 未知意图类型，跳过执行\n"
                 task.status = TaskStatus.FAILED
                 task.error = "unknown_intent"
 
@@ -205,45 +161,41 @@ class Coordinator:
             logger.exception(f"任务执行失败: {e}")
             task.status = TaskStatus.FAILED
             task.error = str(e)
-            yield f"\n[Coordinator] ❌ 执行失败: {e}\n"
 
         finally:
             task.finished_at = time.time()
-            task.status = TaskStatus.COMPLETED if task.error is None else TaskStatus.FAILED
-            elapsed = (task.finished_at - task.started_at) * 1000
-            yield f"\n[Coordinator] 任务完成，耗时: {elapsed:.0f}ms\n"
+            task.status = task.status if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED) else (
+                TaskStatus.COMPLETED if task.error is None else TaskStatus.FAILED)
+            elapsed = (task.finished_at - (task.started_at or task.finished_at)) * 1000
+            logger.info(f"[Coordinator] 任务完成，耗时: {elapsed:.0f}ms | 结果: {task.status.value}")
 
     async def _run_code_task(self, task: Task) -> AsyncGenerator[str, None]:
-        """执行代码类任务（调用执行Agent）"""
-        yield f"[Coordinator] → 分发给执行Agent...\n"
-
-        # 调用执行Agent，流式输出
+        """执行代码类任务（调用执行Agent），流式输出实际回复"""
+        logger.info(f"[Coordinator] → 分发给执行Agent...")
         result_gen = self.executor.execute_stream(task.description)
 
         for chunk in result_gen:
             if isinstance(chunk, str):
-                # 过滤掉执行Agent的[M-Agent]前缀，避免混淆
-                clean_chunk = chunk.replace("[M-Agent]", "[Executor]")
-                yield clean_chunk
+                # SSE只输出实际内容，不过滤——让客户端看到完整流式输出
+                yield chunk
                 self._result_agg.add_chunk(chunk)
             else:
-                # 最后一个是ExecutionResult
                 result = chunk
                 task.result = result
+                task.error = result.error
                 self.state.completed_task_ids.append(task.task_id)
-
-        yield f"\n[Coordinator] 执行Agent返回结果，已记录\n"
+                logger.info(f"[Executor] 执行完成 | 耗时: {result.duration_ms:.0f}ms | 结果: {result.success} | 实际输出: {result.actual_output[:200] if result.actual_output else '(无)'}")
 
     def _run_chat(self, task: Task):
         """闲聊类任务：直接调用 LLM 生成回复"""
-        yield f"[Coordinator] → 闲聊模式\n"
+        logger.info(f"[Coordinator] → 闲聊模式")
         from ..core.llm_engine import get_reasoning_engine
         llm = get_reasoning_engine()
         response = llm.generate(
             prompt=task.description,
             system="你是一个友好、有用的AI助手。用户跟你打招呼，简洁回复即可。",
         )
-        yield f"\n{response}\n"
+        yield response
         task.result = response
         task.status = TaskStatus.COMPLETED
         self.state.completed_task_ids.append(task.task_id)

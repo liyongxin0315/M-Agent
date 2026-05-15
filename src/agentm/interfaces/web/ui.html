@@ -92,31 +92,33 @@
 </div>
 
 <script>
-  const SESSION_KEY = 'magent_session';
-  const HISTORY_KEY = 'magent_history';
-  let currentSession = localStorage.getItem(SESSION_KEY) || null;
-  let loading = false;
+  var SESSION_KEY = 'magent_session';
+  var HISTORY_KEY = 'magent_history';
+  var currentSession = localStorage.getItem(SESSION_KEY) || null;
+  var loading = false;
 
-  const messages = document.getElementById('messages');
-  const promptEl = document.getElementById('prompt');
-  const sendBtn = document.getElementById('sendBtn');
+  var messagesEl = document.getElementById('messages');
+  var promptEl = document.getElementById('prompt');
+  var sendBtn = document.getElementById('sendBtn');
 
   function loadHistory() {
-    const list = document.getElementById('historyList');
-    const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
-    const keys = Object.keys(all).reverse();
+    var list = document.getElementById('historyList');
+    var all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
+    var keys = Object.keys(all).reverse();
     if (keys.length === 0) {
       list.innerHTML = '<div class="history-empty">No history yet</div>';
       return;
     }
-    list.innerHTML = keys.map(function(k) {
-      return '<div class="history-item" onclick="loadSession(\'' + k + '\')">' + escapeHtml(all[k].title || k) + '</div>';
-    }).join('');
+    var html = '';
+    for (var i = 0; i < keys.length; i++) {
+      html += '<div class="history-item" onclick="loadSession(\'' + keys[i] + '\')">' + escapeHtml(all[keys[i]].title || keys[i]) + '</div>';
+    }
+    list.innerHTML = html;
   }
 
   function loadSession(id) {
-    const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
-    const sess = all[id];
+    var all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
+    var sess = all[id];
     if (!sess) return;
     localStorage.setItem(SESSION_KEY, id);
     currentSession = id;
@@ -124,16 +126,22 @@
   }
 
   function renderMessages(msgs) {
-    messages.innerHTML = '';
-    if (msgs.length === 0) {
-      messages.innerHTML = '<div class="welcome"><h2>你好，我是 M-Agent</h2><p>我能帮你写代码、审查代码、修复bug，也可以聊聊</p></div>';
+    messagesEl.innerHTML = '';
+    if (!msgs || msgs.length === 0) {
+      showWelcome();
       return;
     }
-    msgs.forEach(function(m) { addMessage(m.role, m.content, false); });
+    for (var i = 0; i < msgs.length; i++) {
+      addMessage(msgs[i].role, msgs[i].content, false);
+    }
+  }
+
+  function showWelcome() {
+    messagesEl.innerHTML = '<div class="welcome"><h2>你好，我是 M-Agent</h2><p>我能帮你写代码、审查代码、修复bug，也可以聊聊</p></div>';
   }
 
   function saveMessage(role, content) {
-    const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
+    var all = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}');
     if (!currentSession) {
       currentSession = Date.now().toString();
       localStorage.setItem(SESSION_KEY, currentSession);
@@ -150,7 +158,7 @@
   function clearHistory() {
     localStorage.removeItem(SESSION_KEY);
     currentSession = null;
-    messages.innerHTML = '<div class="welcome"><h2>你好，我是 M-Agent</h2><p>我能帮你写代码、审查代码、修复bug，也可以聊聊</p></div>';
+    showWelcome();
     loadHistory();
   }
 
@@ -160,13 +168,13 @@
 
   function addMessage(role, content, save) {
     save = save !== false;
-    var welcome = messages.querySelector('.welcome');
-    if (welcome) messages.removeChild(welcome);
+    var welcome = messagesEl.querySelector('.welcome');
+    if (welcome) messagesEl.removeChild(welcome);
     var div = document.createElement('div');
     div.className = 'msg ' + role;
     div.innerHTML = '<div class="avatar">' + (role === 'user' ? 'U' : 'M') + '</div><div class="bubble">' + escapeHtml(content) + '</div>';
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
     if (save) saveMessage(role, content);
   }
 
@@ -181,13 +189,18 @@
     div.className = 'msg agent';
     div.id = 'loadingMsg';
     div.innerHTML = '<div class="avatar">M</div><div class="bubble"><div class="loading"><div class="spinner"></div>思考中...</div></div>';
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   function removeLoading() {
     var el = document.getElementById('loadingMsg');
-    if (el) el.remove();
+    if (el) messagesEl.removeChild(el);
+  }
+
+  function appendToBubble(bubble, text) {
+    bubble.textContent += text;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   async function send() {
@@ -197,6 +210,7 @@
     addMessage('user', text);
     showLoading();
     setLoading(true);
+
     try {
       var body = { prompt: text };
       if (currentSession) body.session_id = currentSession;
@@ -205,31 +219,21 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
+
       removeLoading();
+
+      // Create agent bubble immediately (for streaming)
+      var agentDiv = document.createElement('div');
+      agentDiv.className = 'msg agent';
+      agentDiv.innerHTML = '<div class="avatar">M</div><div class="bubble" id="agentBubble"></div>';
+      messagesEl.appendChild(agentDiv);
+      var bubble = document.getElementById('agentBubble');
+
       var reader = res.body.getReader();
       var decoder = new TextDecoder();
       var buffer = '';
       var reply = '';
-      // Current output bubble
-      var curDiv = null;
-      var curText = '';
-      function flush() {
-        if (!curDiv) {
-          curDiv = document.createElement('div');
-          curDiv.className = 'msg agent';
-          curDiv.innerHTML = '<div class="avatar">M</div><div class="bubble"></div>';
-          messages.appendChild(curDiv);
-        }
-        if (curText) {
-          curDiv.querySelector('.bubble').textContent += curText;
-          reply += curText;
-          curText = '';
-        }
-      }
-      function newSection() {
-        flush();
-        curDiv = null;
-      }
+
       while (true) {
         var result = await reader.read();
         if (result.done) break;
@@ -241,37 +245,22 @@
           if (line.slice(0, 6) !== 'data: ') continue;
           var data = line.slice(6);
           if (data === '[DONE]') continue;
-          // Decode escaped newlines
           var decoded = data.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
-          // Split into logical lines for display
-          var parts = decoded.split(/\n/);
-          for (var j = 0; j < parts.length; j++) {
-            var part = parts[j];
-            // Section markers start a new bubble
-            if (part.match(/^\[(Coordinator|Executor|System)\]/)) {
-              newSection();
-            } else if (part === '') {
-              // Empty line → blank separator within current bubble
-              curText += '\n';
-              continue;
-            }
-            if (curText && curText[curText.length - 1] !== '\n' && part !== '') {
-              curText += '\n';
-            }
-            curText += part;
-          }
+          appendToBubble(bubble, decoded);
+          reply += decoded;
         }
-        messages.scrollTop = messages.scrollHeight;
       }
-      flush(); // last piece
+
       if (reply) saveMessage('agent', reply);
+
     } catch (e) {
       removeLoading();
       var errDiv = document.createElement('div');
       errDiv.className = 'msg agent';
       errDiv.innerHTML = '<div class="avatar">M</div><div class="bubble" style="color:#f87171">Error: ' + escapeHtml(e.message) + '</div>';
-      messages.appendChild(errDiv);
+      messagesEl.appendChild(errDiv);
     }
+
     setLoading(false);
     loadHistory();
   }
