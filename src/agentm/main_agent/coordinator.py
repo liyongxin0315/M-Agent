@@ -3,7 +3,7 @@
 
 职责：
   - 接收用户指令
-  - 意图分析（解析要做什么、复杂度如何）
+  - 意图分析（LLM 语义分类 + 缓存）
   - 任务拆解（拆成子任务，分发给对应Agent）
   - 结果汇总（流式输出）
   - 状态管理（记录当前状态）
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 import time
+import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, AsyncGenerator
@@ -46,9 +47,9 @@ class Task:
     task_id: str
     description: str
     intent: IntentType = IntentType.TASK
-    mode: str = "auto"               # auto/simple/complex
-    parent_id: str | None = None      # 父任务ID
-    sub_tasks: list[str] = field(default_factory=list)  # 子任务ID列表
+    mode: str = "auto"
+    parent_id: str | None = None
+    sub_tasks: list[str] = field(default_factory=list)
     result: Any = None
     error: str | None = None
     status: TaskStatus = TaskStatus.PENDING
@@ -79,38 +80,155 @@ class ResultAggregator:
         return "".join(self.parts)
 
 
+# —————————————————————————————————————————————
+# LLM 意图分类器（带缓存）
+# —————————————————————————————————————————————
+
+# 少样本示例：告诉 LLM 哪些输入属于哪类
+_INTENT_EXAMPLES = """
+用户输入 → 意图分类
+
+"你好" → chat
+"hi，你好" → chat
+"你是谁" → chat
+"你能干嘛" → chat
+"现在几点了" → chat
+"给我讲个笑话" → chat
+"推荐一首诗" → chat
+"解释一下什么是递归" → chat
+
+"帮我写一个快速排序" → code_generate
+"用 Python 实现一个队列" → code_generate
+"写个函数判断素数" → code_generate
+"生成一个 REST API 的例子" → code_generate
+"帮我写个爬虫" → code_generate
+
+"这段代码报错了" → code_fix
+"修复一下这个 bug" → code_fix
+"为什么程序崩溃了" → code_fix
+
+"这段代码太乱了，帮我重构" → code_refactor
+"优化一下性能" → code_refactor
+
+"帮我看看这段代码有没有问题" → code_review
+"代码审查一下" → code_review
+"""
+
+_INTENT_CLASSIFY_PROMPT = """你是一个意图分类器。根据用户输入，判断它属于哪个意图类型。
+
+意图类型：
+- chat：闲聊、打招呼、问问题（与编程无关的问题）、通用问答
+- code_generate：要求写代码、生成代码片段、实现某个功能
+- code_fix：修复 bug、报错修复
+- code_refactor：重构代码、优化代码结构
+- code_review：审查代码、评审代码
+
+{examples}
+
+现在分类：
+"{user_input}" → """
+
+# —————————————————————————————————————————————
+
+class IntentCache:
+    """意图分类缓存，LRU 策略"""
+
+    def __init__(self, max_size: int = 200):
+        self._cache: dict[str, IntentType] = {}
+        self._max_size = max_size
+
+    def get(self, prompt: str) -> IntentType | None:
+        key = prompt.strip().lower()
+        return self._cache.get(key)
+
+    def set(self, prompt: str, intent: IntentType):
+        key = prompt.strip().lower()
+        if len(self._cache) >= self._max_size:
+            # 简单策略：清掉最老的 20%
+            keys_to_remove = list(self._cache.keys())[: self._max_size // 5]
+            for k in keys_to_remove:
+                del self._cache[k]
+        self._cache[key] = intent
+
+
 class IntentParser:
-    """意图解析器"""
+    """
+    LLM 意图分类器。
 
-    KEYWORDS = {
-        IntentType.CHAT: [
-            "你好", "hi", "hello", "嗨", "hey", "早上好", "下午好", "晚上好",
-            "你是谁", "叫什么", "干什么的", "有什么功能", "能做什么",
-            "帮我干嘛", "都能干嘛", "用什么模型", "你是干嘛的", "你是ai吗",
-            "你会什么", "说说话", "聊聊天", "随便聊聊", "介绍一下",
-        ],
-        IntentType.CODE_GENERATE: [
-            "写", "生成", "帮我写", "实现", "创建", "function", "def ",
-            "class ", "帮我写个", "写一个", "generate", "write", "create",
-        ],
-        IntentType.CODE_FIX: [
-            "修复", "fix", "bug", "报错", "错误", "问题", "修复它",
-        ],
-        IntentType.CODE_REFACTOR: [
-            "重构", "refactor", "优化代码", "改进",
-        ],
-        IntentType.CODE_REVIEW: [
-            "审查", "review", "评审", "看看代码",
-        ],
-    }
+    - 优先走缓存（命中率高的请求直接返回）
+    - 缓存未命中则调用本地 Ollama LLM 做少样本分类
+    - 分类结果缓存供下次使用
+    """
 
-    def parse(self, prompt: str) -> tuple[IntentType, str]:
-        prompt_lower = prompt.lower().strip()
-        for intent, keywords in self.KEYWORDS.items():
-            for kw in keywords:
-                if kw.lower() in prompt_lower:
-                    return intent, prompt
-        return IntentType.CODE_GENERATE, prompt
+    def __init__(self, cache_size: int = 200):
+        self._cache = IntentCache(max_size=cache_size)
+
+    async def parse(self, prompt: str) -> tuple[IntentType, str]:
+        """
+        异步分类。缓存命中则直接返回，否则调 LLM。
+        """
+        # 1. 缓存查询（同步，快）
+        cached = self._cache.get(prompt)
+        if cached is not None:
+            logger.debug(f"[IntentParser] cache hit: '{prompt[:40]}' → {cached.value}")
+            return cached, prompt
+
+        # 2. LLM 分类（异步，调 Ollama）
+        intent = await self._classify_with_llm(prompt)
+        self._cache.set(prompt, intent)
+        logger.debug(f"[IntentParser] LLM classified: '{prompt[:40]}' → {intent.value}")
+        return intent, prompt
+
+    async def _classify_with_llm(self, prompt: str) -> IntentType:
+        """
+        调用 Ollama 做少样本意图分类。
+        失败时默认回退到 code_generate（偏保守，避免漏掉代码任务）。
+        """
+        try:
+            from ..core.llm_engine import get_reasoning_engine
+            llm = get_reasoning_engine()
+
+            full_prompt = _INTENT_CLASSIFY_PROMPT.format(
+                examples=_INTENT_EXAMPLES,
+                user_input=prompt,
+            )
+
+            response = llm.generate(
+                prompt=full_prompt,
+                system="你是一个意图分类器，只输出分类结果（如 chat / code_generate / code_fix 等），不要输出其他内容。",
+            )
+
+            # 解析 LLM 返回的分类
+            intent = self._parse_response(response.strip())
+            return intent
+
+        except Exception as e:
+            logger.warning(f"[IntentParser] LLM 分类失败，回退到 code_generate: {e}")
+            return IntentType.CODE_GENERATE
+
+    def _parse_response(self, raw: str) -> IntentType:
+        """从 LLM 返回中解析出 IntentType"""
+        raw = raw.strip().lower()
+
+        # 尝试直接匹配
+        for intent in IntentType:
+            if intent.value in raw:
+                return intent
+
+        # 模糊匹配
+        if "chat" in raw or "闲聊" in raw or "打招呼" in raw:
+            return IntentType.CHAT
+        if "fix" in raw or "bug" in raw or "修复" in raw or "报错" in raw:
+            return IntentType.CODE_FIX
+        if "review" in raw or "审查" in raw or "评审" in raw:
+            return IntentType.CODE_REVIEW
+        if "refactor" in raw or "重构" in raw or "优化" in raw:
+            return IntentType.CODE_REFACTOR
+        if "generate" in raw or "生成" in raw or "写代码" in raw or "实现" in raw:
+            return IntentType.CODE_GENERATE
+
+        # 默认
+        return IntentType.CODE_GENERATE
 
 
 class Coordinator:
@@ -128,10 +246,11 @@ class Coordinator:
 
     async def run(self, prompt: str) -> AsyncGenerator[str, None]:
         """
-        异步流式执行：接收任务 → 分析 → 分发 → 流式输出结果
-        SSE只输出实际回复内容，内部日志写到文件
+        异步流式执行：意图分类 → 分发 → 流式输出
+        SSE 只输出实际回复内容，内部日志写到文件
         """
-        intent, task_desc = self.intent_parser.parse(prompt)
+        # 1. LLM 意图分类（带缓存）
+        intent, task_desc = await self.intent_parser.parse(prompt)
         task_id = str(uuid.uuid4())[:8]
         task = Task(
             task_id=task_id,
@@ -164,8 +283,6 @@ class Coordinator:
 
         finally:
             task.finished_at = time.time()
-            task.status = task.status if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED) else (
-                TaskStatus.COMPLETED if task.error is None else TaskStatus.FAILED)
             elapsed = (task.finished_at - (task.started_at or task.finished_at)) * 1000
             logger.info(f"[Coordinator] 任务完成，耗时: {elapsed:.0f}ms | 结果: {task.status.value}")
 
@@ -176,7 +293,6 @@ class Coordinator:
 
         for chunk in result_gen:
             if isinstance(chunk, str):
-                # SSE只输出实际内容，不过滤——让客户端看到完整流式输出
                 yield chunk
                 self._result_agg.add_chunk(chunk)
             else:
