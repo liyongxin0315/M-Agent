@@ -75,9 +75,11 @@ class IntentParser:
         IntentType.CHAT: [
             "你好", "hi", "hello", "嗨", "hey", "早上好", "下午好", "晚上好",
             "你是谁", "叫什么", "干什么的", "有什么功能", "能做什么",
+            "帮我干嘛", "都能干嘛", "用什么模型", "你是干嘛的", "你是ai吗",
+            "你会什么", "说说话", "聊聊天", "随便聊聊", "介绍一下",
         ],
         IntentType.CODE_GENERATE: [
-            "写", "生成", "帮我写", "实现", "创建", "代码", "function", "def ",
+            "写", "生成", "帮我写", "实现", "创建", "function", "def ",
             "class ", "帮我写个", "写一个", "generate", "write", "create",
         ],
         IntentType.CODE_FIX: [

@@ -210,11 +210,26 @@
       var decoder = new TextDecoder();
       var buffer = '';
       var reply = '';
-      var agentDiv = document.createElement('div');
-      agentDiv.className = 'msg agent';
-      agentDiv.innerHTML = '<div class="avatar">M</div><div class="bubble" id="agentBubble"></div>';
-      messages.appendChild(agentDiv);
-      var bubble = document.getElementById('agentBubble');
+      // Current output bubble
+      var curDiv = null;
+      var curText = '';
+      function flush() {
+        if (!curDiv) {
+          curDiv = document.createElement('div');
+          curDiv.className = 'msg agent';
+          curDiv.innerHTML = '<div class="avatar">M</div><div class="bubble"></div>';
+          messages.appendChild(curDiv);
+        }
+        if (curText) {
+          curDiv.querySelector('.bubble').textContent += curText;
+          reply += curText;
+          curText = '';
+        }
+      }
+      function newSection() {
+        flush();
+        curDiv = null;
+      }
       while (true) {
         var result = await reader.read();
         if (result.done) break;
@@ -226,12 +241,29 @@
           if (line.slice(0, 6) !== 'data: ') continue;
           var data = line.slice(6);
           if (data === '[DONE]') continue;
+          // Decode escaped newlines
           var decoded = data.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
-          bubble.textContent += decoded;
-          reply += decoded;
+          // Split into logical lines for display
+          var parts = decoded.split(/\n/);
+          for (var j = 0; j < parts.length; j++) {
+            var part = parts[j];
+            // Section markers start a new bubble
+            if (part.match(/^\[(Coordinator|Executor|System)\]/)) {
+              newSection();
+            } else if (part === '') {
+              // Empty line → blank separator within current bubble
+              curText += '\n';
+              continue;
+            }
+            if (curText && curText[curText.length - 1] !== '\n' && part !== '') {
+              curText += '\n';
+            }
+            curText += part;
+          }
         }
         messages.scrollTop = messages.scrollHeight;
       }
+      flush(); // last piece
       if (reply) saveMessage('agent', reply);
     } catch (e) {
       removeLoading();
