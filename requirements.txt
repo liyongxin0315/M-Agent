@@ -1,8 +1,0 @@
-# Runtime dependencies
-# AgentM core modules have no external dependencies beyond Python standard library
-
-# Optional: FastAPI for SSE integration
-fastapi>=0.100.0
-
-# Optional: For production deployment
-uvicorn>=0.23.0
