@@ -182,32 +182,44 @@ async def execute(req: ExecuteRequest):
     )
 
 
+# 全局请求锁，禁止并发流式请求
+_stream_lock = asyncio.Lock()
+
+
 @app.post("/execute/stream")
 async def execute_stream(req: ExecuteRequest):
-    coord = get_coordinator()
-    if req.session_id:
-        coord.session_id = req.session_id
+    # 如果已有请求在执行，等待其完成（避免 chunk 交叉）
+    await _stream_lock.acquire()
+    try:
+        coord = get_coordinator()
+        if req.session_id:
+            coord.session_id = req.session_id
 
-    async def event_generator():
-        try:
-            async for chunk in coord.run(req.prompt):
-                # SSE-safe: 换行转为\\n
-                safe = chunk.replace("\\", "\\\\").replace("\n", "\\n")
-                yield f"data: {safe}\n\n"
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            logger.error(f"Stream error: {e}")
-            yield f"data: [ERROR]{str(e)}\n\n"
+        async def event_generator():
+            try:
+                async for chunk in coord.run(req.prompt):
+                    # SSE-safe: 换行转为\\n
+                    safe = chunk.replace("\\", "\\\\").replace("\n", "\\n")
+                    yield f"data: {safe}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                logger.error(f"Stream error: {e}")
+                yield f"data: [ERROR]{str(e)}\n\n"
+            finally:
+                _stream_lock.release()
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except Exception:
+        _stream_lock.release()
+        raise
 
 
 @app.get("/state/{session_id}", response_model=StateResponse)

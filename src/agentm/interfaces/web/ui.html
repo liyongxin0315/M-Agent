@@ -206,10 +206,11 @@
   async function send() {
     var text = promptEl.value.trim();
     if (!text || loading) return;
+    // 立即锁死，防止重复点击
+    setLoading(true);
     promptEl.value = '';
     addMessage('user', text);
     showLoading();
-    setLoading(true);
 
     try {
       var body = { prompt: text };
@@ -220,13 +221,12 @@
         body: JSON.stringify(body)
       });
 
-      removeLoading();
-
-      // Create agent bubble immediately (for streaming)
+      // Create agent bubble for streaming
       var agentDiv = document.createElement('div');
       agentDiv.className = 'msg agent';
       agentDiv.innerHTML = '<div class="avatar">M</div><div class="bubble" id="agentBubble"></div>';
       messagesEl.appendChild(agentDiv);
+      removeLoading();
       var bubble = document.getElementById('agentBubble');
 
       var reader = res.body.getReader();
@@ -245,6 +245,10 @@
           if (line.slice(0, 6) !== 'data: ') continue;
           var data = line.slice(6);
           if (data === '[DONE]') continue;
+          if (data.startsWith('[ERROR]')) {
+            bubble.textContent += '\n[Error: ' + data.slice(7) + ']';
+            break;
+          }
           var decoded = data.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
           appendToBubble(bubble, decoded);
           reply += decoded;
